@@ -1,0 +1,86 @@
+import * as THREE from 'three';
+
+function main() {
+  const canvas = document.getElementById('canvas');
+  const renderer = new THREE.WebGLRenderer({antialias: true, canvas});
+
+  // « frustum » nom d'une forme 3D qui ressemble à une pyramide dont la pointe est tranchée.
+  const fov = 75; // champ de vision
+  const aspect = 2; // the canvas default rapport d'aspect (display aspect) du canevas
+  const near = 0.1;  //l'espace devant la caméra qui sera rendu au plus pres.
+  const far = 6; //  l'espace devant la caméra qui sera rendu au plus loin.
+  const camera = new THREE.PerspectiveCamera(fov, aspect, near, far);
+  // reculer légèrement la caméra par rapport à l'origine afin de voir quelque chose.
+  camera.position.z = 4;
+
+  const scene = new THREE.Scene();
+
+  const boxWidth = 1
+  const boxHeight = 1
+  const boxDepth = 1
+  const geometry = new THREE.BoxGeometry(boxWidth, boxHeight, boxDepth);
+
+  function makeInstance(geometry, color, x, y) {
+    const material = new THREE.MeshPhongMaterial({color: color});
+
+    const cube = new THREE.Mesh(geometry, material);
+    scene.add(cube);
+
+    cube.position.x = x
+    cube.position.y = y
+
+    return cube;
+  }
+
+  const cube = [
+    makeInstance(geometry, 0x44aa88, 0, 0),
+    makeInstance(geometry, 0x8844aa, -2, 1),
+    makeInstance(geometry, 0xaa8844, 2, 1),
+    makeInstance(geometry, 0xaa6655, 0, 2),
+  ]
+
+  function resizeRendererToDisplaySize(renderer) {
+    const canvas = renderer.domElement;
+    const pixelRatio = window.devicePixelRatio;
+    const width  = Math.floor( canvas.clientWidth  * pixelRatio );
+    const height = Math.floor( canvas.clientHeight * pixelRatio );
+    const needResize = canvas.width !== width || canvas.height !== height;
+    if (needResize) {
+      renderer.setSize(width, height, false);
+    }
+    return needResize;
+  }
+
+
+
+  function render(time) {
+    time *= 0.001;
+
+    if (resizeRendererToDisplaySize(renderer)) {
+      const canvas = renderer.domElement;
+      camera.aspect = canvas.clientWidth / canvas.clientHeight;
+      camera.updateProjectionMatrix();
+    }
+
+    cube.forEach((cube, index) => {
+      const speed = 1 + index * 0.1;
+      let rotation = time * speed;
+      cube.rotation.x = rotation;
+      cube.rotation.y = rotation;
+    })
+
+    renderer.render(scene, camera);
+    requestAnimationFrame(render);
+  }
+
+  requestAnimationFrame(render);
+
+  const color = 0xffffff;
+  const intensity = 3;
+  const light = new THREE.DirectionalLight(color, intensity);
+  light.position.set(-1, 2, 4);
+  scene.add(light);
+}
+
+main()
+
