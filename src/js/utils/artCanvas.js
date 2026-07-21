@@ -5,9 +5,8 @@
  * Dès que tu déposes une vraie image dans `public/artworks/`, il suffit de renseigner
  * `image: 'artworks/mon-tableau.jpg'` dans src/js/data/artworks.js et elle prend le dessus.
  *
- * La fonction est PURE et déterministe : le même `art` produit toujours la même toile.
- * C'est ce qui permet à la couche 3D (CanvasTexture) et à la couche DOM (la modale)
- * d'afficher exactement la même image sans se partager d'état.
+ * La fonction est PURE et déterministe : le même `art` produit toujours le même
+ * canvas, ensuite converti en CanvasTexture par `Artwork`.
  */
 
 /** Générateur pseudo-aléatoire déterministe (mulberry32) : même graine → même suite. */

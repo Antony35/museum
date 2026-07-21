@@ -1,6 +1,6 @@
 import Museum from "./src/js/Museum.js";
 import Hud from "./src/js/ui/Hud.js";
-import Modal from "./src/js/ui/Modal.js";
+import ArtworkPanel from "./src/js/ui/ArtworkPanel.js";
 import Picker from "./src/js/Picker.js";
 
 /**
@@ -11,28 +11,44 @@ import Picker from "./src/js/Picker.js";
 const canvas = document.getElementById('canvas');
 const museum = new Museum(canvas);
 const hud = new Hud(document.getElementById('hud'));
-const modal = new Modal(document.getElementById('modal'));
+const artworkPanel = new ArtworkPanel(document.getElementById('artwork-panel'));
+const cameraAnimationDuration = () =>
+  window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : undefined;
+let inspectionActive = false;
 
 // --- 3D → DOM ---------------------------------------------------------------
 museum.on('hover', (artwork) => hud.setTooltip(artwork));
 museum.on('stats', (stats) => hud.setStats(stats));
 museum.on('lock', (locked) => {
-  // Quand une fiche est ouverte, la perte du pointer lock est normale :
-  // on ne réaffiche pas l'écran d'accueil par-dessus la modale.
-  if (!modal.isOpen) hud.setLocked(locked);
+  // La perte du pointer lock est normale pendant une inspection : l'écran
+  // d'accueil doit rester masqué pendant les deux travellings.
+  if (!inspectionActive) hud.setLocked(locked);
 });
-museum.on('select', (artwork) => {
-  museum.unlock();       // libère la souris pour que la fiche soit utilisable
+museum.on('select', async (artwork) => {
+  if (inspectionActive) return;
+
+  inspectionActive = true;
+  hud.setInspecting(true);
   museum.setPaused(true);
-  modal.open(artwork);
+  museum.unlock();
+
+  await museum.focusArtwork(artwork, cameraAnimationDuration());
+  artworkPanel.open(artwork);
 });
 
 // --- DOM → 3D ---------------------------------------------------------------
 hud.onStart(() => museum.lock());
 
-modal.onClose(() => {
+artworkPanel.onClose(async () => {
+  if (!inspectionActive || !artworkPanel.isOpen) return;
+
+  await artworkPanel.close();
+  await museum.restoreVisitView(cameraAnimationDuration());
+
+  inspectionActive = false;
   museum.setPaused(false);
-  hud.setLocked(false);   // on repasse par l'écran d'accueil : re-lock exige un geste utilisateur
+  hud.setInspecting(false);
+  museum.lock();
 });
 
 // --- Clic sur le canvas ------------------------------------------------------
@@ -40,7 +56,7 @@ modal.onClose(() => {
 //   souris verrouillée   → le clic vise le réticule (centre de l'écran)
 //   souris libre         → le clic vise le pointeur (indispensable au tactile)
 canvas.addEventListener('click', (event) => {
-  if (modal.isOpen) return;
+  if (inspectionActive) return;
 
   if (museum.isLocked) {
     museum.trySelect(null);

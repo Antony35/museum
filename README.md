@@ -1,8 +1,8 @@
 # Musée Couleur & Silence
 
 Musée virtuel explorable en vue subjective, construit avec **Three.js** et **Vite**.
-Quatorze œuvres réparties sur trois cimaises ; le clic sur une toile (raycasting) ouvre
-une fiche HTML enrichie.
+Quatorze œuvres réparties sur trois cimaises ; le clic sur une toile (raycasting) lance
+un travelling d'inspection et affiche ses informations à droite de l'œuvre.
 
 ## Lancer le projet
 
@@ -21,10 +21,9 @@ pnpm preview    # sert le build de production
 | Regarder | souris (pointer lock) |
 | Courir | `Maj` |
 | Examiner une œuvre | clic (le réticule doit être sur la toile) |
-| Libérer la souris / fermer une fiche | `Échap` |
+| Libérer la souris / quitter l'inspection | `Échap` |
 
-Sur mobile ou si le pointer lock n'est pas disponible, le clic direct sur un tableau
-ouvre sa fiche.
+Sans pointer lock, le clic direct sur un tableau lance également son inspection.
 
 ## Architecture
 
@@ -41,7 +40,7 @@ src/js/
   Picker.js                    Raycaster (réticule ou pointeur)
   controls/PlayerControls.js   PointerLockControls + clavier + collisions Box3
   ui/Hud.js                    Réticule, info-bulle, aide, compteur FPS  ← zéro import three
-  ui/Modal.js                  Fiche d'œuvre                             ← zéro import three
+  ui/ArtworkPanel.js           Panneau d'informations                    ← zéro import three
   data/artworks.js             Catalogue : la source de vérité unique
   utils/artCanvas.js           Génération procédurale déterministe des toiles
 src/utils/
@@ -68,10 +67,11 @@ grep -rn "three" src/js/ui/                                       # doit être v
   d'un mur au lieu de rester bloqué en diagonale.
 - **Déplacement en delta time** — la vitesse est multipliée par le temps écoulé, donc identique
   à 30 comme à 144 FPS.
+- **Éclairage d'inspection réutilisable** — un unique `SpotLight` doux se déplace vers l'œuvre
+  sélectionnée pendant que l'éclairage général s'atténue, puis la scène retrouve ses intensités.
 - **`devicePixelRatio` plafonné à 2** — au-delà, le coût en pixels explose pour un gain nul.
-- **Toiles procédurales déterministes** — `createArtCanvas()` est une fonction pure appelée à la
-  fois par la 3D (`CanvasTexture`) et par la modale (`<canvas>`), ce qui garantit la même image
-  des deux côtés sans partager d'état.
+- **Toiles procédurales déterministes** — `createArtCanvas()` produit toujours le même
+  canvas à partir des données et de la graine ; `Artwork` le convertit en `CanvasTexture`.
 
 ## Ajouter une œuvre
 
@@ -97,6 +97,8 @@ _À tenir à jour au fil du développement — c'est un livrable noté._
 | --- | --- | --- | --- |
 | 1 | Cadrage du projet | Décrire le sujet imposé et demander une feuille de route technique complète (navigation, architecture des modules, étapes) | Choix de `PointerLockControls`, architecture procédurale avec `Room`/`Wall`, Blender réservé aux objets décoratifs |
 | 2 | Implémentation | Demander une première version fonctionnelle complète du musée | Code relu module par module ; à documenter au fur et à mesure des modifications |
+| 3 | Inspection immersive | Remplacer la fiche modale par un travelling vers l'œuvre et des informations superposées à droite, façon réalité augmentée | Cadrage frontal avec contexte, panneau translucide sans image dupliquée, retour à la vue initiale et respect de la réduction des animations |
+| 4 | Mise en lumière | Assombrir la salle pendant l'inspection et concentrer un projecteur sur l'œuvre | Réutilisation d'un seul `SpotLight`, transition synchronisée avec la caméra ; intensité divisée par deux et contour adouci après revue visuelle |
 
 > Ajouter ici chaque prompt significatif : ce que vous avez demandé, ce que l'IA a produit,
 > et surtout **ce que vous avez corrigé ou rejeté**. C'est le recul critique qui est noté,

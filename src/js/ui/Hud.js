@@ -9,6 +9,8 @@ export default class Hud {
 
   constructor(root) {
     this.root = root;
+    this.locked = false;
+    this.inspecting = false;
     this.#build();
   }
 
@@ -58,9 +60,18 @@ export default class Hud {
 
   /** Affiche ou masque l'écran d'accueil selon l'état du pointer lock. */
   setLocked(locked) {
+    this.locked = locked;
     this.intro.classList.toggle('is-hidden', locked);
-    this.crosshair.classList.toggle('is-active', locked);
+    this.crosshair.classList.toggle('is-active', locked && !this.inspecting);
     if (!locked) this.setTooltip(null);
+  }
+
+  /** Masque les aides de visée pendant les travellings et la lecture. */
+  setInspecting(inspecting) {
+    this.inspecting = inspecting;
+    if (inspecting) this.locked = false;
+    this.crosshair.classList.toggle('is-active', this.locked && !inspecting);
+    if (inspecting) this.setTooltip(null);
   }
 
   /** @param {{title: string, artist: string}|null} artwork */
