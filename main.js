@@ -32,7 +32,7 @@ hud.onStart(() => museum.lock());
 
 modal.onClose(() => {
   museum.setPaused(false);
-  hud.setLocked(false);   // on repasse par l'écran d'accueil : re-lock exige un geste utilisateur
+  museum.lock();          // la fermeture est un geste utilisateur : on reprend directement la visite
 });
 
 // --- Clic sur le canvas ------------------------------------------------------
