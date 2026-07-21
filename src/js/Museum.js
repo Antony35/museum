@@ -11,9 +11,9 @@ const INSPECTION_SCREEN_X = -0.38; // centre de l'œuvre dans la moitié gauche
 const MAX_HALF_SCREEN_WIDTH = 0.48;
 const MAX_HALF_SCREEN_HEIGHT = 0.58;
 const FRAMING_MARGIN = 1.12; // inclut le cadre et un peu de mur
-const DIMMED_LIGHT_LEVEL = 0.28;
-const SPOTLIGHT_INTENSITY = 32;
-const SPOTLIGHT_MARGIN = 1.16;
+const DIMMED_LIGHT_LEVEL = 0.4;
+const SPOTLIGHT_INTENSITY = 16;
+const SPOTLIGHT_MARGIN = 1.24;
 
 function easeInOutCubic(progress) {
   return progress < 0.5
@@ -143,11 +143,11 @@ export default class Museum {
 
     // Un seul projecteur, déplacé vers l'œuvre inspectée puis éteint au retour.
     this.inspectionSpotlight = new THREE.SpotLight(
-      0xffe4bd,
+      0xffead2,
       0,
       10,
       Math.PI / 7,
-      0.65,
+      0.9,
       1.4,
     );
     this.inspectionSpotlight.target = new THREE.Object3D();

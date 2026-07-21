@@ -67,7 +67,7 @@ grep -rn "three" src/js/ui/                                       # doit être v
   d'un mur au lieu de rester bloqué en diagonale.
 - **Déplacement en delta time** — la vitesse est multipliée par le temps écoulé, donc identique
   à 30 comme à 144 FPS.
-- **Éclairage d'inspection réutilisable** — un unique `SpotLight` se déplace vers l'œuvre
+- **Éclairage d'inspection réutilisable** — un unique `SpotLight` doux se déplace vers l'œuvre
   sélectionnée pendant que l'éclairage général s'atténue, puis la scène retrouve ses intensités.
 - **`devicePixelRatio` plafonné à 2** — au-delà, le coût en pixels explose pour un gain nul.
 - **Toiles procédurales déterministes** — `createArtCanvas()` produit toujours le même
@@ -98,7 +98,7 @@ _À tenir à jour au fil du développement — c'est un livrable noté._
 | 1 | Cadrage du projet | Décrire le sujet imposé et demander une feuille de route technique complète (navigation, architecture des modules, étapes) | Choix de `PointerLockControls`, architecture procédurale avec `Room`/`Wall`, Blender réservé aux objets décoratifs |
 | 2 | Implémentation | Demander une première version fonctionnelle complète du musée | Code relu module par module ; à documenter au fur et à mesure des modifications |
 | 3 | Inspection immersive | Remplacer la fiche modale par un travelling vers l'œuvre et des informations superposées à droite, façon réalité augmentée | Cadrage frontal avec contexte, panneau translucide sans image dupliquée, retour à la vue initiale et respect de la réduction des animations |
-| 4 | Mise en lumière | Assombrir la salle pendant l'inspection et concentrer un projecteur sur l'œuvre | Réutilisation d'un seul `SpotLight`, transition synchronisée avec la caméra et restauration des intensités au retour |
+| 4 | Mise en lumière | Assombrir la salle pendant l'inspection et concentrer un projecteur sur l'œuvre | Réutilisation d'un seul `SpotLight`, transition synchronisée avec la caméra ; intensité divisée par deux et contour adouci après revue visuelle |
 
 > Ajouter ici chaque prompt significatif : ce que vous avez demandé, ce que l'IA a produit,
 > et surtout **ce que vous avez corrigé ou rejeté**. C'est le recul critique qui est noté,
