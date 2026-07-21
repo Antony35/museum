@@ -7,6 +7,10 @@ import PlayerControls from "./controls/PlayerControls.js";
 import {artworks} from "./data/artworks.js";
 
 const ROOM = {width: 20, height: 5, depth: 14};
+const INSPECTION_SCREEN_X = -0.38; // centre de l'œuvre dans la moitié gauche
+const MAX_HALF_SCREEN_WIDTH = 0.48;
+const MAX_HALF_SCREEN_HEIGHT = 0.58;
+const FRAMING_MARGIN = 1.12; // inclut le cadre et un peu de mur
 
 /**
  * La couche 3D, et rien d'autre.
@@ -50,6 +54,8 @@ export default class Museum {
     this.controls.onLockChange((locked) => this.#emit('lock', locked));
 
     this.hovered = null;
+    this.cameraAnimation = null;
+    this.visitView = null;
     this.clock = new THREE.Clock();
 
     // --- Compteur de FPS ------------------------------------------------------
@@ -158,9 +164,76 @@ export default class Museum {
     return this.controls.isLocked;
   }
 
-  /** Active/désactive le déplacement (utilisé quand la modale est ouverte). */
+  /** Active/désactive le déplacement pendant l'inspection d'une œuvre. */
   setPaused(paused) {
     this.controls.enabled = !paused;
+    if (paused) this.controls.velocity.set(0, 0, 0);
+  }
+
+  /**
+   * Anime la caméra vers une vue frontale de l'œuvre, cadrée à gauche.
+   * @param {object} art une entrée de src/js/data/artworks.js
+   * @param {number} duration durée du travelling en millisecondes
+   */
+  focusArtwork(art, duration = 900) {
+    this.visitView = {
+      position: this.camera.position.clone(),
+      quaternion: this.camera.quaternion.clone(),
+    };
+
+    const rotation = art.rotationY ?? 0;
+    const normal = new THREE.Vector3(0, 0, 1).applyAxisAngle(THREE.Object3D.DEFAULT_UP, rotation);
+    const right = new THREE.Vector3(1, 0, 0).applyAxisAngle(THREE.Object3D.DEFAULT_UP, rotation);
+    const center = new THREE.Vector3(art.position.x, art.position.y, art.position.z);
+
+    const halfFov = THREE.MathUtils.degToRad(this.camera.fov / 2);
+    const distanceByHeight = (art.height * FRAMING_MARGIN / 2)
+      / (Math.tan(halfFov) * MAX_HALF_SCREEN_HEIGHT);
+    const distanceByWidth = (art.width * FRAMING_MARGIN / 2)
+      / (Math.tan(halfFov) * this.camera.aspect * MAX_HALF_SCREEN_WIDTH);
+    const distance = Math.max(distanceByHeight, distanceByWidth);
+    const horizontalOffset = -INSPECTION_SCREEN_X * distance * Math.tan(halfFov) * this.camera.aspect;
+    const position = center.clone()
+      .addScaledVector(normal, distance)
+      .addScaledVector(right, horizontalOffset);
+
+    const matrix = new THREE.Matrix4().lookAt(
+      position,
+      position.clone().sub(normal),
+      THREE.Object3D.DEFAULT_UP,
+    );
+    const quaternion = new THREE.Quaternion().setFromRotationMatrix(matrix);
+
+    return this.#animateCamera(position, quaternion, duration);
+  }
+
+  /** Replace la caméra là où le visiteur se trouvait avant l'inspection. */
+  restoreVisitView(duration = 750) {
+    if (!this.visitView) return Promise.resolve();
+
+    const {position, quaternion} = this.visitView;
+    this.visitView = null;
+    return this.#animateCamera(position, quaternion, duration);
+  }
+
+  #animateCamera(position, quaternion, duration) {
+    if (duration === 0) {
+      this.camera.position.copy(position);
+      this.camera.quaternion.copy(quaternion);
+      return Promise.resolve();
+    }
+
+    return new Promise((resolve) => {
+      this.cameraAnimation = {
+        fromPosition: this.camera.position.clone(),
+        fromQuaternion: this.camera.quaternion.clone(),
+        toPosition: position,
+        toQuaternion: quaternion,
+        elapsed: 0,
+        duration: duration / 1000,
+        resolve,
+      };
+    });
   }
 
   /**
@@ -191,11 +264,35 @@ export default class Museum {
     }
 
     this.controls.update(delta);
+    this.#updateCameraAnimation(delta);
     this.#updateHover();
     this.#updateStats(delta);
 
     this.renderer.render(this.scene, this.camera);
     requestAnimationFrame(this.render);
+  }
+
+  #updateCameraAnimation(delta) {
+    if (!this.cameraAnimation) return;
+
+    const animation = this.cameraAnimation;
+    animation.elapsed += delta;
+    const progress = Math.min(animation.elapsed / animation.duration, 1);
+    const eased = progress < 0.5
+      ? 4 * progress ** 3
+      : 1 - ((-2 * progress + 2) ** 3) / 2;
+
+    this.camera.position.lerpVectors(animation.fromPosition, animation.toPosition, eased);
+    this.camera.quaternion.slerpQuaternions(
+      animation.fromQuaternion,
+      animation.toQuaternion,
+      eased,
+    );
+
+    if (progress === 1) {
+      this.cameraAnimation = null;
+      animation.resolve();
+    }
   }
 
   /** Surbrillance + info-bulle de l'œuvre visée. 14 objets testés : négligeable. */

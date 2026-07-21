@@ -1,7 +1,7 @@
 /**
  * Catalogue du musée.
  *
- * C'est la SEULE source de vérité : la 3D y lit position/taille, la modale y lit le texte.
+ * C'est la SEULE source de vérité : la 3D y lit position/taille, le panneau y lit le texte.
  * Ajouter une œuvre = ajouter un objet ici, rien d'autre à toucher.
  *
  * Champs :
