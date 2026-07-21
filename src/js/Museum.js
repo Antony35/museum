@@ -11,6 +11,15 @@ const INSPECTION_SCREEN_X = -0.38; // centre de l'œuvre dans la moitié gauche
 const MAX_HALF_SCREEN_WIDTH = 0.48;
 const MAX_HALF_SCREEN_HEIGHT = 0.58;
 const FRAMING_MARGIN = 1.12; // inclut le cadre et un peu de mur
+const DIMMED_LIGHT_LEVEL = 0.28;
+const SPOTLIGHT_INTENSITY = 32;
+const SPOTLIGHT_MARGIN = 1.16;
+
+function easeInOutCubic(progress) {
+  return progress < 0.5
+    ? 4 * progress ** 3
+    : 1 - ((-2 * progress + 2) ** 3) / 2;
+}
 
 /**
  * La couche 3D, et rien d'autre.
@@ -37,6 +46,7 @@ export default class Museum {
     this.camera = new THREE.PerspectiveCamera(70, 2, 0.1, 120);
     this.camera.position.set(0, 1.65, 5.5);
 
+    this.generalLights = [];
     this.#buildRoom();
     this.#buildLights();
     this.#buildArtworks();
@@ -55,6 +65,7 @@ export default class Museum {
 
     this.hovered = null;
     this.cameraAnimation = null;
+    this.lightAnimation = null;
     this.visitView = null;
     this.clock = new THREE.Clock();
 
@@ -92,7 +103,9 @@ export default class Museum {
 
   #buildLights() {
     // Lumière d'ambiance froide très douce : rien ne doit être totalement noir.
-    this.scene.add(new THREE.HemisphereLight(0xdfe6f0, 0x2a2622, 0.55));
+    const ambient = new THREE.HemisphereLight(0xdfe6f0, 0x2a2622, 0.55);
+    this.scene.add(ambient);
+    this.generalLights.push({light: ambient, intensity: ambient.intensity});
 
     // Une directionnelle zénithale pour ancrer les ombres au sol.
     const key = new THREE.DirectionalLight(0xfff4e2, 1.1);
@@ -104,6 +117,7 @@ export default class Museum {
     key.shadow.camera.top = 12;
     key.shadow.camera.bottom = -12;
     this.scene.add(key);
+    this.generalLights.push({light: key, intensity: key.intensity});
 
     // Rampe de spots au plafond : c'est ce qui donne l'atmosphère "galerie".
     // 6 sources seulement — chaque lumière dynamique coûte cher au fragment shader.
@@ -119,12 +133,25 @@ export default class Museum {
       const light = new THREE.PointLight(0xffe9c8, 14, 13, 2);
       light.position.set(x, ROOM.height - 0.5, z);
       this.scene.add(light);
+      this.generalLights.push({light, intensity: light.intensity});
 
       // Le luminaire visible (MeshBasicMaterial = ignore l'éclairage, donc toujours "allumé").
       const fixture = new THREE.Mesh(fixtureGeometry, fixtureMaterial);
       fixture.position.set(x, ROOM.height - 0.12, z);
       this.scene.add(fixture);
     }
+
+    // Un seul projecteur, déplacé vers l'œuvre inspectée puis éteint au retour.
+    this.inspectionSpotlight = new THREE.SpotLight(
+      0xffe4bd,
+      0,
+      10,
+      Math.PI / 7,
+      0.65,
+      1.4,
+    );
+    this.inspectionSpotlight.target = new THREE.Object3D();
+    this.scene.add(this.inspectionSpotlight, this.inspectionSpotlight.target);
   }
 
   #buildArtworks() {
@@ -197,6 +224,15 @@ export default class Museum {
       .addScaledVector(normal, distance)
       .addScaledVector(right, horizontalOffset);
 
+    this.inspectionSpotlight.position.copy(center)
+      .addScaledVector(normal, 2.8)
+      .add(new THREE.Vector3(0, 2.2, 0));
+    this.inspectionSpotlight.target.position.copy(center);
+    const artworkRadius = Math.hypot(art.width, art.height) / 2 * SPOTLIGHT_MARGIN;
+    const spotlightDistance = this.inspectionSpotlight.position.distanceTo(center);
+    this.inspectionSpotlight.angle = Math.atan(artworkRadius / spotlightDistance);
+    this.#animateInspectionLighting(true, duration);
+
     const matrix = new THREE.Matrix4().lookAt(
       position,
       position.clone().sub(normal),
@@ -213,7 +249,30 @@ export default class Museum {
 
     const {position, quaternion} = this.visitView;
     this.visitView = null;
+    this.#animateInspectionLighting(false, duration);
     return this.#animateCamera(position, quaternion, duration);
+  }
+
+  #animateInspectionLighting(focused, duration) {
+    const generalTargetFactor = focused ? DIMMED_LIGHT_LEVEL : 1;
+    const spotlightTarget = focused ? SPOTLIGHT_INTENSITY : 0;
+
+    if (duration === 0) {
+      for (const {light, intensity} of this.generalLights) {
+        light.intensity = intensity * generalTargetFactor;
+      }
+      this.inspectionSpotlight.intensity = spotlightTarget;
+      return;
+    }
+
+    this.lightAnimation = {
+      fromGeneral: this.generalLights.map(({light}) => light.intensity),
+      toGeneral: this.generalLights.map(({intensity}) => intensity * generalTargetFactor),
+      fromSpotlight: this.inspectionSpotlight.intensity,
+      toSpotlight: spotlightTarget,
+      elapsed: 0,
+      duration: duration / 1000,
+    };
   }
 
   #animateCamera(position, quaternion, duration) {
@@ -265,6 +324,7 @@ export default class Museum {
 
     this.controls.update(delta);
     this.#updateCameraAnimation(delta);
+    this.#updateLightAnimation(delta);
     this.#updateHover();
     this.#updateStats(delta);
 
@@ -278,9 +338,7 @@ export default class Museum {
     const animation = this.cameraAnimation;
     animation.elapsed += delta;
     const progress = Math.min(animation.elapsed / animation.duration, 1);
-    const eased = progress < 0.5
-      ? 4 * progress ** 3
-      : 1 - ((-2 * progress + 2) ** 3) / 2;
+    const eased = easeInOutCubic(progress);
 
     this.camera.position.lerpVectors(animation.fromPosition, animation.toPosition, eased);
     this.camera.quaternion.slerpQuaternions(
@@ -293,6 +351,30 @@ export default class Museum {
       this.cameraAnimation = null;
       animation.resolve();
     }
+  }
+
+  #updateLightAnimation(delta) {
+    if (!this.lightAnimation) return;
+
+    const animation = this.lightAnimation;
+    animation.elapsed += delta;
+    const progress = Math.min(animation.elapsed / animation.duration, 1);
+    const eased = easeInOutCubic(progress);
+
+    this.generalLights.forEach(({light}, index) => {
+      light.intensity = THREE.MathUtils.lerp(
+        animation.fromGeneral[index],
+        animation.toGeneral[index],
+        eased,
+      );
+    });
+    this.inspectionSpotlight.intensity = THREE.MathUtils.lerp(
+      animation.fromSpotlight,
+      animation.toSpotlight,
+      eased,
+    );
+
+    if (progress === 1) this.lightAnimation = null;
   }
 
   /** Surbrillance + info-bulle de l'œuvre visée. 14 objets testés : négligeable. */
