@@ -7,6 +7,19 @@ import PlayerControls from "./controls/PlayerControls.js";
 import {artworks} from "./data/artworks.js";
 
 const ROOM = {width: 20, height: 5, depth: 14};
+const INSPECTION_SCREEN_X = -0.38; // centre de l'œuvre dans la moitié gauche
+const MAX_HALF_SCREEN_WIDTH = 0.48;
+const MAX_HALF_SCREEN_HEIGHT = 0.58;
+const FRAMING_MARGIN = 1.12; // inclut le cadre et un peu de mur
+const DIMMED_LIGHT_LEVEL = 0.4;
+const SPOTLIGHT_INTENSITY = 16;
+const SPOTLIGHT_MARGIN = 1.24;
+
+function easeInOutCubic(progress) {
+  return progress < 0.5
+    ? 4 * progress ** 3
+    : 1 - ((-2 * progress + 2) ** 3) / 2;
+}
 
 /**
  * La couche 3D, et rien d'autre.
@@ -33,6 +46,7 @@ export default class Museum {
     this.camera = new THREE.PerspectiveCamera(70, 2, 0.1, 120);
     this.camera.position.set(0, 1.65, 5.5);
 
+    this.generalLights = [];
     this.#buildRoom();
     this.#buildLights();
     this.#buildArtworks();
@@ -50,6 +64,9 @@ export default class Museum {
     this.controls.onLockChange((locked) => this.#emit('lock', locked));
 
     this.hovered = null;
+    this.cameraAnimation = null;
+    this.lightAnimation = null;
+    this.visitView = null;
     this.clock = new THREE.Clock();
 
     // --- Compteur de FPS ------------------------------------------------------
@@ -86,7 +103,9 @@ export default class Museum {
 
   #buildLights() {
     // Lumière d'ambiance froide très douce : rien ne doit être totalement noir.
-    this.scene.add(new THREE.HemisphereLight(0xdfe6f0, 0x2a2622, 0.55));
+    const ambient = new THREE.HemisphereLight(0xdfe6f0, 0x2a2622, 0.55);
+    this.scene.add(ambient);
+    this.generalLights.push({light: ambient, intensity: ambient.intensity});
 
     // Une directionnelle zénithale pour ancrer les ombres au sol.
     const key = new THREE.DirectionalLight(0xfff4e2, 1.1);
@@ -98,6 +117,7 @@ export default class Museum {
     key.shadow.camera.top = 12;
     key.shadow.camera.bottom = -12;
     this.scene.add(key);
+    this.generalLights.push({light: key, intensity: key.intensity});
 
     // Rampe de spots au plafond : c'est ce qui donne l'atmosphère "galerie".
     // 6 sources seulement — chaque lumière dynamique coûte cher au fragment shader.
@@ -113,12 +133,25 @@ export default class Museum {
       const light = new THREE.PointLight(0xffe9c8, 14, 13, 2);
       light.position.set(x, ROOM.height - 0.5, z);
       this.scene.add(light);
+      this.generalLights.push({light, intensity: light.intensity});
 
       // Le luminaire visible (MeshBasicMaterial = ignore l'éclairage, donc toujours "allumé").
       const fixture = new THREE.Mesh(fixtureGeometry, fixtureMaterial);
       fixture.position.set(x, ROOM.height - 0.12, z);
       this.scene.add(fixture);
     }
+
+    // Un seul projecteur, déplacé vers l'œuvre inspectée puis éteint au retour.
+    this.inspectionSpotlight = new THREE.SpotLight(
+      0xffead2,
+      0,
+      10,
+      Math.PI / 7,
+      0.9,
+      1.4,
+    );
+    this.inspectionSpotlight.target = new THREE.Object3D();
+    this.scene.add(this.inspectionSpotlight, this.inspectionSpotlight.target);
   }
 
   #buildArtworks() {
@@ -158,9 +191,108 @@ export default class Museum {
     return this.controls.isLocked;
   }
 
-  /** Active/désactive le déplacement (utilisé quand la modale est ouverte). */
+  /** Active/désactive le déplacement pendant l'inspection d'une œuvre. */
   setPaused(paused) {
     this.controls.enabled = !paused;
+    if (paused) this.controls.velocity.set(0, 0, 0);
+  }
+
+  /**
+   * Anime la caméra vers une vue frontale de l'œuvre, cadrée à gauche.
+   * @param {object} art une entrée de src/js/data/artworks.js
+   * @param {number} duration durée du travelling en millisecondes
+   */
+  focusArtwork(art, duration = 900) {
+    this.visitView = {
+      position: this.camera.position.clone(),
+      quaternion: this.camera.quaternion.clone(),
+    };
+
+    const rotation = art.rotationY ?? 0;
+    const normal = new THREE.Vector3(0, 0, 1).applyAxisAngle(THREE.Object3D.DEFAULT_UP, rotation);
+    const right = new THREE.Vector3(1, 0, 0).applyAxisAngle(THREE.Object3D.DEFAULT_UP, rotation);
+    const center = new THREE.Vector3(art.position.x, art.position.y, art.position.z);
+
+    const halfFov = THREE.MathUtils.degToRad(this.camera.fov / 2);
+    const distanceByHeight = (art.height * FRAMING_MARGIN / 2)
+      / (Math.tan(halfFov) * MAX_HALF_SCREEN_HEIGHT);
+    const distanceByWidth = (art.width * FRAMING_MARGIN / 2)
+      / (Math.tan(halfFov) * this.camera.aspect * MAX_HALF_SCREEN_WIDTH);
+    const distance = Math.max(distanceByHeight, distanceByWidth);
+    const horizontalOffset = -INSPECTION_SCREEN_X * distance * Math.tan(halfFov) * this.camera.aspect;
+    const position = center.clone()
+      .addScaledVector(normal, distance)
+      .addScaledVector(right, horizontalOffset);
+
+    this.inspectionSpotlight.position.copy(center)
+      .addScaledVector(normal, 2.8)
+      .add(new THREE.Vector3(0, 2.2, 0));
+    this.inspectionSpotlight.target.position.copy(center);
+    const artworkRadius = Math.hypot(art.width, art.height) / 2 * SPOTLIGHT_MARGIN;
+    const spotlightDistance = this.inspectionSpotlight.position.distanceTo(center);
+    this.inspectionSpotlight.angle = Math.atan(artworkRadius / spotlightDistance);
+    this.#animateInspectionLighting(true, duration);
+
+    const matrix = new THREE.Matrix4().lookAt(
+      position,
+      position.clone().sub(normal),
+      THREE.Object3D.DEFAULT_UP,
+    );
+    const quaternion = new THREE.Quaternion().setFromRotationMatrix(matrix);
+
+    return this.#animateCamera(position, quaternion, duration);
+  }
+
+  /** Replace la caméra là où le visiteur se trouvait avant l'inspection. */
+  restoreVisitView(duration = 750) {
+    if (!this.visitView) return Promise.resolve();
+
+    const {position, quaternion} = this.visitView;
+    this.visitView = null;
+    this.#animateInspectionLighting(false, duration);
+    return this.#animateCamera(position, quaternion, duration);
+  }
+
+  #animateInspectionLighting(focused, duration) {
+    const generalTargetFactor = focused ? DIMMED_LIGHT_LEVEL : 1;
+    const spotlightTarget = focused ? SPOTLIGHT_INTENSITY : 0;
+
+    if (duration === 0) {
+      for (const {light, intensity} of this.generalLights) {
+        light.intensity = intensity * generalTargetFactor;
+      }
+      this.inspectionSpotlight.intensity = spotlightTarget;
+      return;
+    }
+
+    this.lightAnimation = {
+      fromGeneral: this.generalLights.map(({light}) => light.intensity),
+      toGeneral: this.generalLights.map(({intensity}) => intensity * generalTargetFactor),
+      fromSpotlight: this.inspectionSpotlight.intensity,
+      toSpotlight: spotlightTarget,
+      elapsed: 0,
+      duration: duration / 1000,
+    };
+  }
+
+  #animateCamera(position, quaternion, duration) {
+    if (duration === 0) {
+      this.camera.position.copy(position);
+      this.camera.quaternion.copy(quaternion);
+      return Promise.resolve();
+    }
+
+    return new Promise((resolve) => {
+      this.cameraAnimation = {
+        fromPosition: this.camera.position.clone(),
+        fromQuaternion: this.camera.quaternion.clone(),
+        toPosition: position,
+        toQuaternion: quaternion,
+        elapsed: 0,
+        duration: duration / 1000,
+        resolve,
+      };
+    });
   }
 
   /**
@@ -191,11 +323,58 @@ export default class Museum {
     }
 
     this.controls.update(delta);
+    this.#updateCameraAnimation(delta);
+    this.#updateLightAnimation(delta);
     this.#updateHover();
     this.#updateStats(delta);
 
     this.renderer.render(this.scene, this.camera);
     requestAnimationFrame(this.render);
+  }
+
+  #updateCameraAnimation(delta) {
+    if (!this.cameraAnimation) return;
+
+    const animation = this.cameraAnimation;
+    animation.elapsed += delta;
+    const progress = Math.min(animation.elapsed / animation.duration, 1);
+    const eased = easeInOutCubic(progress);
+
+    this.camera.position.lerpVectors(animation.fromPosition, animation.toPosition, eased);
+    this.camera.quaternion.slerpQuaternions(
+      animation.fromQuaternion,
+      animation.toQuaternion,
+      eased,
+    );
+
+    if (progress === 1) {
+      this.cameraAnimation = null;
+      animation.resolve();
+    }
+  }
+
+  #updateLightAnimation(delta) {
+    if (!this.lightAnimation) return;
+
+    const animation = this.lightAnimation;
+    animation.elapsed += delta;
+    const progress = Math.min(animation.elapsed / animation.duration, 1);
+    const eased = easeInOutCubic(progress);
+
+    this.generalLights.forEach(({light}, index) => {
+      light.intensity = THREE.MathUtils.lerp(
+        animation.fromGeneral[index],
+        animation.toGeneral[index],
+        eased,
+      );
+    });
+    this.inspectionSpotlight.intensity = THREE.MathUtils.lerp(
+      animation.fromSpotlight,
+      animation.toSpotlight,
+      eased,
+    );
+
+    if (progress === 1) this.lightAnimation = null;
   }
 
   /** Surbrillance + info-bulle de l'œuvre visée. 14 objets testés : négligeable. */
