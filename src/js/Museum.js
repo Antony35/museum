@@ -4,6 +4,7 @@ import Room from "./Room.js";
 import Artwork from "./Artwork.js";
 import Picker from "./Picker.js";
 import PlayerControls from "./controls/PlayerControls.js";
+import Visitor from "./Visitor.js";
 import {artworks} from "./data/artworks.js";
 
 const ROOM = {width: 20, height: 5, depth: 14};
@@ -23,10 +24,6 @@ function easeInOutCubic(progress) {
 
 /**
  * La couche 3D, et rien d'autre.
- *
- * Cette classe ne fait AUCUN querySelector, ne crée AUCun élément HTML : elle reçoit
- * un canvas et communique avec l'interface uniquement par callbacks (`on(...)`).
- * C'est ce découplage qui permet de remplacer toute l'UI sans toucher à la 3D.
  */
 export default class Museum {
 
@@ -35,7 +32,6 @@ export default class Museum {
     this.renderer = new THREE.WebGLRenderer({antialias: true, canvas});
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    // Tone mapping : compresse les hautes lumières, indispensable dès qu'on éclaire "fort".
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
 
@@ -50,16 +46,14 @@ export default class Museum {
     this.#buildRoom();
     this.#buildLights();
     this.#buildArtworks();
+    this.#buildVisitors();
 
     // --- Interaction ----------------------------------------------------------
-    // Les matrices monde doivent être à jour AVANT de calculer les boîtes de collision,
-    // sinon les Box3 des murs sont calculées à partir de positions locales périmées.
     this.scene.updateMatrixWorld(true);
 
     this.controls = new PlayerControls(this.camera, canvas, this.room.colliders);
-    this.picker = new Picker(this.camera, this.artworks.map((a) => a.mesh));
+    this.picker   = new Picker(this.camera, this.artworks.map((a) => a.mesh));
 
-    /** Callbacks vers l'UI. Aucun accès direct au DOM depuis ici. */
     this.listeners = {hover: [], select: [], lock: [], stats: []};
     this.controls.onLockChange((locked) => this.#emit('lock', locked));
 
@@ -69,8 +63,7 @@ export default class Museum {
     this.visitView = null;
     this.clock = new THREE.Clock();
 
-    // --- Compteur de FPS ------------------------------------------------------
-    this.frames = 0;
+    this.frames   = 0;
     this.fpsTimer = 0;
 
     this.render = this.render.bind(this);
@@ -88,8 +81,6 @@ export default class Museum {
       ceilingColor: 0xf4f2ec,
     });
 
-    // Cimaise centrale : double la surface d'accrochage et oblige à contourner,
-    // ce qui donne un vrai parcours au lieu d'une pièce vide.
     this.room.addPartition({
       width: 10,
       height: ROOM.height,
@@ -107,23 +98,20 @@ export default class Museum {
     this.scene.add(ambient);
     this.generalLights.push({light: ambient, intensity: ambient.intensity});
 
-    // Une directionnelle zénithale pour ancrer les ombres au sol.
     const key = new THREE.DirectionalLight(0xfff4e2, 1.1);
     key.position.set(4, ROOM.height + 3, 4);
     key.castShadow = true;
     key.shadow.mapSize.set(1024, 1024);
-    key.shadow.camera.left = -14;
-    key.shadow.camera.right = 14;
-    key.shadow.camera.top = 12;
+    key.shadow.camera.left   = -14;
+    key.shadow.camera.right  = 14;
+    key.shadow.camera.top    = 12;
     key.shadow.camera.bottom = -12;
     this.scene.add(key);
     this.generalLights.push({light: key, intensity: key.intensity});
 
-    // Rampe de spots au plafond : c'est ce qui donne l'atmosphère "galerie".
-    // 6 sources seulement — chaque lumière dynamique coûte cher au fragment shader.
     const spotPositions = [
       {x: -7, z: -5}, {x: 0, z: -5}, {x: 7, z: -5},
-      {x: -7, z: 5}, {x: 0, z: 5}, {x: 7, z: 5},
+      {x: -7, z: 5},  {x: 0, z: 5},  {x: 7, z: 5},
     ];
 
     const fixtureGeometry = new THREE.BoxGeometry(1.6, 0.08, 0.16);
@@ -135,7 +123,6 @@ export default class Museum {
       this.scene.add(light);
       this.generalLights.push({light, intensity: light.intensity});
 
-      // Le luminaire visible (MeshBasicMaterial = ignore l'éclairage, donc toujours "allumé").
       const fixture = new THREE.Mesh(fixtureGeometry, fixtureMaterial);
       fixture.position.set(x, ROOM.height - 0.12, z);
       this.scene.add(fixture);
@@ -161,15 +148,49 @@ export default class Museum {
       return artwork;
     });
 
-    // Index mesh → Artwork, pour retrouver l'objet métier depuis un résultat de raycast.
     this.artworkByMesh = new Map(this.artworks.map((a) => [a.mesh, a]));
   }
 
+  #buildVisitors() {
+    const H = 1.75;
+
+    // Trois visiteurs (KayKit-style, squelette "CharacterArmature") :
+    //  - 'watcher'  : marche jusqu'à un tableau au hasard, s'arrête, se tourne pour le regarder
+    //  - 'wanderer' : déambule librement dans les bornes de la salle
+    const visitorData = [
+      {url: 'models/visitor1.glb', position: {x: -3, y: 0, z: -2}, rotationY: Math.PI / 2,
+       type: 'watcher',  speed: 0.9, pauseRange: [4, 9]},
+
+      {url: 'models/Visitor2.glb', position: {x: 4, y: 0, z: -1}, rotationY: Math.PI,
+       type: 'wanderer', speed: 0.5, pauseRange: [2, 5]},
+
+      {url: 'models/visitor3.glb', position: {x: 2, y: 0, z: 3}, rotationY: -Math.PI / 2,
+       type: 'watcher',  speed: 0.9, pauseRange: [4, 9]},
+    ];
+
+    this.visitors = visitorData.map((data) => {
+      const visitor = new Visitor(data.url, {
+        position:     new THREE.Vector3(data.position.x, data.position.y, data.position.z),
+        targetHeight: H,
+        rotationY:    data.rotationY,
+        idleClip:     'CharacterArmature|Idle',
+        walkClip:     'CharacterArmature|Walk',
+        type:         data.type,
+        speed:        data.speed,
+        pauseRange:   data.pauseRange,
+      });
+      this.scene.add(visitor.group);
+      visitor.load().catch((error) => {
+        console.warn(`[Museum] échec chargement visiteur ${data.url}`, error);
+      });
+      return visitor;
+    });
+  }
+
   // ==========================================================================
-  // API publique (utilisée par main.js pour câbler l'UI)
+  // API publique
   // ==========================================================================
 
-  /** @param {'hover'|'select'|'lock'|'stats'} event */
   on(event, callback) {
     this.listeners[event].push(callback);
     return this;
@@ -179,13 +200,8 @@ export default class Museum {
     for (const callback of this.listeners[event]) callback(payload);
   }
 
-  lock() {
-    this.controls.lock();
-  }
-
-  unlock() {
-    this.controls.unlock();
-  }
+  lock()   { this.controls.lock(); }
+  unlock() { this.controls.unlock(); }
 
   get isLocked() {
     return this.controls.isLocked;
@@ -295,11 +311,6 @@ export default class Museum {
     });
   }
 
-  /**
-   * Tente une sélection.
-   * @param {{x: number, y: number}|null} ndc null = viser le centre du réticule
-   * @returns {boolean} true si une œuvre a été sélectionnée
-   */
   trySelect(ndc = null) {
     const mesh = this.picker.pick(ndc);
     if (!mesh) return false;
@@ -312,9 +323,7 @@ export default class Museum {
   // ==========================================================================
 
   render() {
-    // getDelta() renvoie le temps écoulé depuis l'appel précédent. Toute la logique
-    // de déplacement passe par lui : le musée se parcourt à la même vitesse partout.
-    const delta = Math.min(this.clock.getDelta(), 0.1);   // clamp : évite le saut après un onglet inactif
+    const delta = Math.min(this.clock.getDelta(), 0.1);
 
     if (resizeRendererToDisplaySize(this.renderer)) {
       const canvas = this.renderer.domElement;
@@ -323,6 +332,20 @@ export default class Museum {
     }
 
     this.controls.update(delta);
+
+    // Bornes de déambulation pour les wanderers
+    const bounds = {
+      minX: -ROOM.width / 2 + 1.2,
+      maxX:  ROOM.width / 2 - 1.2,
+      minZ: -ROOM.depth / 2 + 1.2,
+      maxZ:  ROOM.depth / 2 - 1.2,
+    };
+
+    // Les visiteurs gèrent eux-mêmes leur comportement (watcher / wanderer)
+    this.visitors.forEach((visitor) =>
+      visitor.update(delta, {artworks: this.artworks, bounds})
+    );
+
     this.#updateCameraAnimation(delta);
     this.#updateLightAnimation(delta);
     this.#updateHover();
@@ -379,10 +402,10 @@ export default class Museum {
 
   /** Surbrillance + info-bulle de l'œuvre visée. 14 objets testés : négligeable. */
   #updateHover() {
-    const mesh = this.controls.isLocked ? this.picker.pick() : null;
+    const mesh    = this.controls.isLocked ? this.picker.pick() : null;
     const artwork = mesh ? this.artworkByMesh.get(mesh) : null;
 
-    if (artwork === this.hovered) return;   // rien n'a changé : on ne touche à rien
+    if (artwork === this.hovered) return;
 
     this.hovered?.setHighlighted(false);
     artwork?.setHighlighted(true);
@@ -395,11 +418,11 @@ export default class Museum {
     this.fpsTimer += delta;
     if (this.fpsTimer >= 0.5) {
       this.#emit('stats', {
-        fps: Math.round(this.frames / this.fpsTimer),
-        calls: this.renderer.info.render.calls,
+        fps:       Math.round(this.frames / this.fpsTimer),
+        calls:     this.renderer.info.render.calls,
         triangles: this.renderer.info.render.triangles,
       });
-      this.frames = 0;
+      this.frames   = 0;
       this.fpsTimer = 0;
     }
   }
